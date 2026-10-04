@@ -221,7 +221,7 @@ Two separate trails:
    `prisma generate`, `prisma migrate deploy` over the direct connection, seeds
    the three demo cases **only if the database is empty**, then `next build`.
 
-The investigation route allows up to 90 s (`maxDuration`); the Gemini provider
+Functions are pinned to the database's region in `vercel.json` (`sin1`, Singapore); change it if your database lives elsewhere, since every query crosses that link. The investigation route allows up to 90 s (`maxDuration`); the Gemini provider
 bounds itself to ~75 s across retries and its fallback model before degrading
 to the mock agent. `.vercelignore` keeps local-only files out of the upload.
 
