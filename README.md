@@ -10,7 +10,7 @@ The guiding constraint: **all monetary math is deterministic code. The AI never
 does arithmetic** — it only interprets numbers the engine produced, and its
 interpretation is stored separately from those numbers.
 
-**Live demo:** _URL added after deployment_ · no login required. Use **New sample
+**Live demo:** https://billing-dispute-agent.vercel.app · no login required. Use **New sample
 case** on the home page to get your own fresh copy of a demo dispute.
 
 ---
