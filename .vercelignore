@@ -1,0 +1,12 @@
+# Private / local-only files never uploaded to Vercel
+assignment.md
+.env
+.env.*
+!.env.example
+.claude
+node_modules
+.next
+playwright-report
+test-results
+coverage
+tsconfig.tsbuildinfo
