@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: billing
+          POSTGRES_PASSWORD: billing
+          POSTGRES_DB: billing
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U billing -d billing"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://billing:billing@localhost:5432/billing_test?schema=public
+      E2E_DATABASE_URL: postgresql://billing:billing@localhost:5432/billing_e2e_test?schema=public
+      # Only used by `next build`/`prisma generate`; nothing connects to it.
+      DATABASE_URL: postgresql://billing:billing@localhost:5432/billing?schema=public
+      AGENT_PROVIDER: mock
+      PRISMA_HIDE_UPDATE_MESSAGE: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Integration tests
+        run: npm run test:integration
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: End-to-end tests
+        run: npm run test:e2e
+      - name: Production build
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
