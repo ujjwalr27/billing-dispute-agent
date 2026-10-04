@@ -1,0 +1,5 @@
+# Normalize line endings: store LF in the repo, check out native on each OS.
+* text=auto eol=lf
+# Shell scripts must stay LF (they run inside Linux containers).
+*.sh text eol=lf
+*.db binary
