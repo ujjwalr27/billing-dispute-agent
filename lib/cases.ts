@@ -22,6 +22,13 @@ import type {
 } from "@/lib/validation";
 
 /** Append an immutable entry to the case's decision history. */
+/**
+ * Interactive-transaction limits. Prisma's defaults (2s to acquire, 5s to run)
+ * are too tight for a hosted database with ~100ms+ round trips; these still
+ * bound how long a row lock can be held.
+ */
+const TX_OPTIONS = { maxWait: 10_000, timeout: 20_000 } as const;
+
 export async function logDecision(
   caseId: string,
   actor: string,
@@ -197,37 +204,34 @@ export async function runInvestigation(
 
     // Findings record the evidence the investigation STARTED from. If evidence
     // was added while the agent was running, they will read as stale.
-    for (const f of result.output.findings) {
-      await tx.finding.create({
-        data: {
-          caseId,
-          recalculationId,
-          type: f.type,
-          summary: f.summary,
-          citations: JSON.stringify(f.citations),
-          evidenceHash: result.evidenceHash,
-        },
-      });
-    }
-    for (const o of result.output.resolutionOptions) {
-      await tx.resolutionOption.create({
-        data: {
-          caseId,
-          label: o.label,
-          rationale: o.rationale,
-          proposedCreditCents: o.proposedCreditCents ?? null,
-          citations: JSON.stringify(o.citations),
-          evidenceHash: result.evidenceHash,
-        },
-      });
-    }
+    // One round trip per table instead of one per row.
+    await tx.finding.createMany({
+      data: result.output.findings.map((f) => ({
+        caseId,
+        recalculationId,
+        type: f.type,
+        summary: f.summary,
+        citations: JSON.stringify(f.citations),
+        evidenceHash: result.evidenceHash,
+      })),
+    });
+    await tx.resolutionOption.createMany({
+      data: result.output.resolutionOptions.map((o) => ({
+        caseId,
+        label: o.label,
+        rationale: o.rationale,
+        proposedCreditCents: o.proposedCreditCents ?? null,
+        citations: JSON.stringify(o.citations),
+        evidenceHash: result.evidenceHash,
+      })),
+    });
 
     evidenceChangedMidRun = (await currentEvidenceHash(caseId, tx)) !== result.evidenceHash;
     await tx.case.update({
       where: { id: caseId },
       data: { status: evidenceChangedMidRun ? "REOPENED" : "IN_REVIEW" },
     });
-  });
+  }, TX_OPTIONS);
 
   await logDecision(caseId, opts.actor ?? "agent", "investigation.ran", {
     provider: result.providerName,
@@ -386,7 +390,7 @@ export async function approveAdjustment(
         },
       });
       return { adjustment, duplicate: false };
-    });
+    }, TX_OPTIONS);
     if (!result.duplicate) {
       logger.info("credit.approved", {
         caseId,
@@ -535,7 +539,7 @@ export async function addEvidence(
       });
       result.added.payments.push(p.ref);
     }
-  });
+  }, TX_OPTIONS);
 
   const changed =
     result.added.rules.length +
