@@ -86,6 +86,12 @@ These are the important ones, all fixed and covered by tests:
 10. **Test harness ordering.** Playwright started the dev server before the test
     database was migrated, and a selector matched Next.js's hidden route
     announcer. Both were fixed in the test setup, not by loosening assertions.
+11. **Didn't plan for a remote database.** The first Vercel deploy failed every
+    AI investigation with a 500: the app ran in the US while the database was in
+    Singapore, and saving results took longer than Prisma's default 5-second
+    transaction limit. Found by exercising the live API after deploying. Fix:
+    raised the transaction limits, batched the inserts, and pinned the functions
+    to the database's region (case loads went from ~3 s to ~0.3 s).
 
 **Suggestions I rejected or changed:** a separate Python backend (not needed);
 letting the LLM compute or adjust amounts (rejected by design, since all money
