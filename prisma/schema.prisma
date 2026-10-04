@@ -1,0 +1,205 @@
+// Billing Dispute Investigation Agent — data model.
+//
+// Status/kind fields are `String` and JSON payloads are stored as stringified
+// text (a portable choice that also kept the schema SQLite-compatible during
+// early development). The allowed values are enforced at the application layer
+// with Zod (see lib/validation); the literal unions are documented inline.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Case + evidence
+// ---------------------------------------------------------------------------
+
+model Case {
+  id                 String   @id @default(cuid())
+  customerId         String
+  customerName       String
+  // status: OPEN | IN_REVIEW | RESOLVED | REOPENED
+  status             String   @default("OPEN")
+  disputeDescription String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  invoice           Invoice?
+  pricingRules      PricingRule[]
+  usageEvents       UsageEvent[]
+  payments          PaymentAdj[]
+  recalculations    Recalculation[]
+  findings          Finding[]
+  resolutionOptions ResolutionOption[]
+  adjustments       Adjustment[]
+  decisionLogs      DecisionLog[]
+}
+
+model Invoice {
+  id        String     @id @default(cuid())
+  caseId    String     @unique
+  case      Case       @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  number    String
+  currency  String     @default("USD")
+  issuedAt  DateTime
+  lineItems LineItem[]
+}
+
+model LineItem {
+  id             String  @id @default(cuid())
+  invoiceId      String
+  invoice        Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  // stable human reference used in citations, e.g. "LI-1"
+  ref            String
+  description    String
+  // the pricing rule this line is supposed to be governed by (code), optional
+  ruleCode       String?
+  quantity       Float
+  unitPriceCents Int
+  amountCents    Int
+
+  // refs are cited as evidence, so they must be unambiguous
+  @@unique([invoiceId, ref])
+}
+
+model PricingRule {
+  id          String @id @default(cuid())
+  caseId      String
+  case        Case   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  // stable human reference used in citations, e.g. "RULE-TIER-1"
+  code        String
+  description String
+  // kind: FLAT | PER_UNIT | TIERED | PRORATED
+  kind        String
+  // JSON string of kind-specific parameters (see lib/engine/rules.ts)
+  params      String
+
+  @@unique([caseId, code])
+}
+
+model UsageEvent {
+  id         String   @id @default(cuid())
+  caseId     String
+  case       Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  // stable human reference used in citations, e.g. "USG-1"
+  ref        String
+  type       String
+  quantity   Float
+  occurredAt DateTime
+  // JSON string of extra metadata
+  metadata   String   @default("{}")
+
+  // refs are cited as evidence and counted by the engine: one row per ref
+  @@unique([caseId, ref])
+}
+
+model PaymentAdj {
+  id         String   @id @default(cuid())
+  caseId     String
+  case       Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  ref        String
+  // kind: PAYMENT | CREDIT | ADJUSTMENT
+  kind       String
+  amountCents Int
+  reason     String
+  occurredAt DateTime
+
+  @@unique([caseId, ref])
+}
+
+// ---------------------------------------------------------------------------
+// Engine output (deterministic) — kept separate from AI interpretation
+// ---------------------------------------------------------------------------
+
+model Recalculation {
+  id                 String    @id @default(cuid())
+  caseId             String
+  case               Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  // hash of the evidence snapshot this recalculation was computed from
+  evidenceHash       String
+  originalTotalCents Int
+  recalcTotalCents   Int
+  deltaCents         Int
+  // JSON string: per-line diff array (see lib/engine/recalculate.ts)
+  lineDiffs          String
+  createdAt          DateTime  @default(now())
+  findings           Finding[]
+}
+
+// ---------------------------------------------------------------------------
+// AI interpretation — never contains arithmetic the engine didn't produce
+// ---------------------------------------------------------------------------
+
+model Finding {
+  id              String         @id @default(cuid())
+  caseId          String
+  case            Case           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  recalculationId String?
+  recalculation   Recalculation? @relation(fields: [recalculationId], references: [id], onDelete: SetNull)
+  // type: CALC_ERROR | CONTRACT_AMBIGUITY | MISSING_EVIDENCE
+  type            String
+  summary         String
+  // JSON string: array of { kind: "invoice"|"usage"|"rule"|"payment", ref: string }
+  citations       String
+  // reviewStatus: PENDING | ACCEPTED | EDITED | REJECTED
+  reviewStatus    String         @default("PENDING")
+  editedText      String?
+  // evidence hash this finding was based on. A finding is STALE whenever this
+  // differs from the hash of the case's current evidence (computed on read, so
+  // it can't drift out of sync).
+  evidenceHash    String
+  // set when a newer investigation replaces this finding; kept for history
+  supersededAt    DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([caseId, supersededAt])
+}
+
+model ResolutionOption {
+  id                 String   @id @default(cuid())
+  caseId             String
+  case               Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  label              String
+  rationale          String
+  proposedCreditCents Int?
+  // JSON string: array of citations (same shape as Finding.citations)
+  citations          String
+  evidenceHash       String
+  supersededAt       DateTime?
+  createdAt          DateTime @default(now())
+
+  @@index([caseId, supersededAt])
+}
+
+// ---------------------------------------------------------------------------
+// Reviewer decisions
+// ---------------------------------------------------------------------------
+
+model Adjustment {
+  id             String   @id @default(cuid())
+  caseId         String
+  case           Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  findingId      String?
+  amountCents    Int
+  reason         String
+  // idempotency guard: a repeat key is a no-op, preventing duplicate credits
+  idempotencyKey String   @unique
+  approvedBy     String
+  createdAt      DateTime @default(now())
+}
+
+model DecisionLog {
+  id        String   @id @default(cuid())
+  caseId    String
+  case      Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  actor     String
+  action    String
+  // JSON string payload describing the action
+  payload   String   @default("{}")
+  createdAt DateTime @default(now())
+}
