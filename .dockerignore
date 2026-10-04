@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.env
+.env*.local
+*.db
+*.db-journal
+prisma/*.db
+npm-debug.log*
+coverage
+.vercel
+README.md
+IMPLEMENTATION_PLAN.md
+assignment.md
+Dockerfile
+.dockerignore
+docker-compose.yml
